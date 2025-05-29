@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>C Я Y О Ѕ H α Я D - mic</title>
+  <style>
+    body { 
+      margin: 0; 
+      background: radial-gradient(circle at center, #000010, #000000); 
+      overflow: hidden; 
+      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cline x1='12' y1='0' x2='12' y2='24' stroke='%2300ff00' stroke-width='2'/%3E%3Cline x1='0' y1='12' x2='24' y2='12' stroke='%2300ff00' stroke-width='2'/%3E%3C/svg%3E") 12 12, crosshair;
+    }
+    canvas { 
+      position: absolute; 
+      width: 100%; 
+      height: 100%; 
+      display: block; 
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js"></script>
+</head>
+<body>
+<canvas id="globeCanvas"></canvas>
+<script>
+// Setup
+const canvas = document.getElementById('globeCanvas');
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({canvas, antialias: true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+camera.position.z = 6;
+
+const center = new THREE.Object3D();
+scene.add(center);
+
+// Lights
+const violetLight = new THREE.PointLight(0x8888ff, 1.8);
+violetLight.position.set(4, 4, 4);
+scene.add(violetLight);
+
+const greenLight = new THREE.DirectionalLight(0x00ff00, 0.5);
+greenLight.position.set(-10, 10, 10);
+scene.add(greenLight);
+
+const ambientLight = new THREE.AmbientLight(0x222244, 0.4);
+scene.add(ambientLight);
+
+// Noise
+const simplex = new SimplexNoise(Math.random() * 10000);
+
+// Create crystal
+const geo = new THREE.IcosahedronGeometry(1, 4);
+const pos = geo.attributes.position;
+const basePos = new Float32Array(pos.count * 3);
+
+for (let i = 0; i < pos.count; i++) {
+  let x = pos.getX(i);
+  let y = pos.getY(i);
+  let z = pos.getZ(i);
+
+  const normal = new THREE.Vector3(x, y, z).normalize();
+  const noise = simplex.noise3D(x * 3, y * 3, z * 3);
+  const distanceFromCenter = new THREE.Vector3(x, y, z).length();
+
+  const strength = 1 + noise * 0.4 + distanceFromCenter * 0.3;
+
+  x = normal.x * strength;
+  y = normal.y * strength;
+  z = normal.z * strength;
+
+  pos.setXYZ(i, x, y, z);
+
+  basePos[i * 3 + 0] = x;
+  basePos[i * 3 + 1] = y;
+  basePos[i * 3 + 2] = z;
+}
+geo.computeVertexNormals();
+
+const mat = new THREE.MeshStandardMaterial({ 
+  color: 0x8888ff, 
+  metalness: 0.6, 
+  roughness: 0.4, 
+  flatShading: true
+});
+const shard = new THREE.Mesh(geo, mat);
+shard.position.set(0, 0, 0);
+center.add(shard);
+
+// Microphone setup
+let audioLevel = 0;
+navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const source = audioCtx.createMediaStreamSource(stream);
+  const analyser = audioCtx.createAnalyser();
+  source.connect(analyser);
+  analyser.fftSize = 512;
+  const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+  function updateAudio() {
+    analyser.getByteFrequencyData(dataArray);
+    let sum = 0;
+    for (let i = 0; i < dataArray.length; i++) {
+      sum += dataArray[i];
+    }
+    audioLevel = sum / dataArray.length / 255;
+    requestAnimationFrame(updateAudio);
+  }
+  updateAudio();
+}).catch((err) => {
+  console.error('Microphone error:', err);
+});
+
+// Variables
+let dragging = false;
+let lastX = 0;
+let lastY = 0;
+let scale = 1;
+let time = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  time += 0.0015;
+
+  // Breathing with audio
+  for (let i = 0; i < pos.count; i++) {
+    const bx = basePos[i * 3 + 0];
+    const by = basePos[i * 3 + 1];
+    const bz = basePos[i * 3 + 2];
+
+    const noise = simplex.noise4D(bx * 1.5, by * 1.5, bz * 1.5, time);
+    const factor = 1 + Math.abs(noise) * (0.04 + audioLevel * 3.0);
+
+    pos.setXYZ(i, bx * factor, by * factor, bz * factor);
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+
+  // Horizontal rotation
+  center.rotation.y += 0.0015;
+  center.scale.set(scale, scale, scale);
+
+  renderer.render(scene, camera);
+}
+
+// Mouse events
+canvas.addEventListener('mousemove', (e) => {
+  if (dragging) {
+    const deltaX = (e.clientX - lastX) * 0.005;
+    center.rotation.y += deltaX;
+    lastX = e.clientX;
+    lastY = e.clientY;
+  }
+});
+
+canvas.addEventListener('mousedown', (e) => {
+  dragging = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+
+canvas.addEventListener('mouseup', () => {
+  dragging = false;
+});
+
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const zoomAmount = 0.1;
+  if (e.deltaY < 0) {
+    scale *= 1 + zoomAmount; 
+  } else {
+    scale *= 1 - zoomAmount;
+  }
+  scale = Math.min(Math.max(scale, 0.2), 5);
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+animate();
+
+// Cursor auto-hide after 5s inactivity
+let cursorTimeout;
+function hideCursor() {
+  document.body.style.cursor = 'none';
+}
+function resetCursorTimer() {
+  document.body.style.cursor = 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'24\' height=\'24\'%3E%3Cline x1=\'12\' y1=\'0\' x2=\'12\' y2=\'24\' stroke=\'%2300ff00\' stroke-width=\'2\'/%3E%3Cline x1=\'0\' y1=\'12\' x2=\'24\' y2=\'12\' stroke=\'%2300ff00\' stroke-width=\'2\'/%3E%3C/svg%3E") 12 12, crosshair';
+  clearTimeout(cursorTimeout);
+  cursorTimeout = setTimeout(hideCursor, 5000);
+}
+['mousemove', 'mousedown', 'wheel', 'keydown'].forEach(evt => {
+  window.addEventListener(evt, resetCursorTimer);
+});
+resetCursorTimer();
+</script>
+</body>
+</html>
